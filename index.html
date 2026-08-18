@@ -10,11 +10,24 @@
 <title>シリカチャージ記録</title>
 <style>
   html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#16202B}
-  iframe{width:100%;height:100%;border:0;display:block;background:#fff;position:relative;z-index:2}
+  #wrap{display:flex;flex-direction:column;height:100%}
+  iframe{flex:1 1 auto;width:100%;border:0;display:block;background:#fff}
+  #diag{
+    flex:0 0 auto;background:#0D151C;color:#94A7B8;font-size:10.5px;line-height:1.5;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;padding:6px 9px;
+    max-height:26vh;overflow-y:auto;-webkit-overflow-scrolling:touch;white-space:pre-wrap;word-break:break-all
+  }
+  #diag b{color:#33B183}
+  #diag .ng{color:#FF7A54}
+  #diag .hd{display:flex;gap:8px;align-items:center;margin-bottom:3px}
+  #diag button{
+    background:#22303B;border:1px solid #3A4956;color:#E6ECF2;border-radius:5px;
+    font-size:10px;padding:3px 7px;font-family:inherit
+  }
   #loading{
     position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
     gap:14px;background:#16202B;color:#94A7B8;
-    font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;font-size:13px;z-index:1
+    font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;font-size:13px;z-index:5
   }
   #loading .sp{width:28px;height:28px;border:3px solid #2A3844;border-top-color:#33B183;border-radius:50%;animation:s .8s linear infinite}
   @keyframes s{to{transform:rotate(360deg)}}
@@ -22,11 +35,19 @@
 </head>
 <body>
 <div id="loading"><div class="sp"></div>読み込んでいます…</div>
-<iframe
-  id="app"
-  title="シリカチャージ記録"
-  allow="camera; clipboard-write"
-  src="https://script.google.com/macros/s/AKfycbx5_xnfKKTb_0cG0itesSHWfjPJF_6aU9irLvL17EUKfHEqGnhZYIQmOciVue_It4oc/exec"></iframe>
+
+<div id="wrap">
+  <iframe
+    id="app"
+    title="シリカチャージ記録"
+    allow="camera; clipboard-write"
+    src="https://script.google.com/macros/s/AKfycbx5_xnfKKTb_0cG0itesSHWfjPJF_6aU9irLvL17EUKfHEqGnhZYIQmOciVue_It4oc/exec"></iframe>
+
+  <div id="diag">
+    <div class="hd"><b>診断</b><button id="diagClear">保存を消す</button><button id="diagHide">閉じる</button></div>
+    <div id="diagBody">起動中…</div>
+  </div>
+</div>
 
 <script>
 /**
@@ -34,47 +55,74 @@
  *
  * 中のアプリ（GAS）は別ドメインなので、iPhoneのSafariが
  * その保存領域を消してしまう。こちらは利用者が直接開いている
- * ドメインなので消されない。
+ * ドメインなので消されにくい。
  *
- * 中のアプリから「くれ」と言われたら渡し、「持っておいて」と
- * 言われたら保存する、という受け渡しだけを行う。
+ * ※ いまは原因切り分けのため、下部に診断表示を出している。
+ *    解決したら diag ごと削除する。
  */
 (function(){
   'use strict';
 
-  // GASのユーザーコードは *.googleusercontent.com で動く
-  var ALLOW_ORIGIN = /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/;
-  var KEYS = { device: 'shokubai_deviceId', token: 'shokubai_refreshToken' };
+  var KEYS  = { device:'shokubai_deviceId', token:'shokubai_refreshToken', visit:'shokubai_lastVisit' };
+  var lines = [];
 
   function read(k){ try { return window.localStorage.getItem(k); } catch(e){ return null; } }
-  function write(k,v){ try { window.localStorage.setItem(k,v); } catch(e){} }
+  function write(k,v){ try { window.localStorage.setItem(k,v); return true; } catch(e){ return false; } }
   function drop(k){ try { window.localStorage.removeItem(k); } catch(e){} }
 
+  function log(s, ng){ lines.push(ng ? '<span class="ng">'+s+'</span>' : s); render(); }
+  function render(){ document.getElementById('diagBody').innerHTML = lines.join('<br>'); }
+  function cut(v){ return v ? (String(v).slice(0,10) + '…(' + String(v).length + '文字)') : 'なし'; }
+
+  // ── ① このページ自身の保存が生きているか
+  var prev = read(KEYS.visit);
+  var now  = new Date().toLocaleString('ja-JP', { hour12:false });
+  var okWrite = write(KEYS.visit, now);
+
+  log('① このページの保存');
+  log('   書き込み: ' + (okWrite ? 'できる' : 'できない'), !okWrite);
+  log('   前回開いた記録: ' + (prev ? prev : 'なし（＝消えている or 初回）'), !prev);
+  log('   端末ID: ' + cut(read(KEYS.device)));
+  log('   登録トークン: ' + cut(read(KEYS.token)), !read(KEYS.token));
+  log('② 中のアプリとのやり取り待ち…');
+
+  // ── ② 中のアプリとのやり取り
   window.addEventListener('message', function(e){
-    if (!ALLOW_ORIGIN.test(e.origin)) return;
     var m = e.data;
-    if (!m || typeof m !== 'object') return;
+    if (!m || typeof m !== 'object' || String(m.type||'').indexOf('AUTH') !== 0) return;
+
+    var okOrigin = /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(e.origin);
+    log('   受信 ' + m.type + ' from ' + e.origin);
+    if (!okOrigin) { log('   → 送信元が想定外のため拒否しました', true); return; }
 
     if (m.type === 'AUTH_GET') {
-      if (!e.source) return;
+      if (!e.source) { log('   → 返信先が取れません', true); return; }
       e.source.postMessage({
         type:         'AUTH_VALUE',
         deviceId:     read(KEYS.device),
         refreshToken: read(KEYS.token)
       }, e.origin);
+      log('   → 渡した：端末ID ' + cut(read(KEYS.device)) + ' / トークン ' + cut(read(KEYS.token)));
 
     } else if (m.type === 'AUTH_SET') {
-      if (m.deviceId)     write(KEYS.device, m.deviceId);
-      if (m.refreshToken) write(KEYS.token,  m.refreshToken);
+      if (m.deviceId)     log('   → 預かった：端末ID ' + cut(m.deviceId) + (write(KEYS.device, m.deviceId) ? '' : '（保存失敗）'));
+      if (m.refreshToken) log('   → 預かった：トークン ' + cut(m.refreshToken) + (write(KEYS.token, m.refreshToken) ? '' : '（保存失敗）'));
 
     } else if (m.type === 'AUTH_CLEAR') {
       drop(KEYS.token);
+      log('   → トークンを消しました');
     }
   });
 
-  // 中のアプリが表示されたら読み込み中の表示を消す
-  var f = document.getElementById('app');
-  f.addEventListener('load', function(){
+  document.getElementById('diagClear').addEventListener('click', function(){
+    drop(KEYS.device); drop(KEYS.token); drop(KEYS.visit);
+    log('保存を消しました。読み込み直すと初回状態になります。');
+  });
+  document.getElementById('diagHide').addEventListener('click', function(){
+    document.getElementById('diag').style.display = 'none';
+  });
+
+  document.getElementById('app').addEventListener('load', function(){
     var el = document.getElementById('loading');
     if (el) el.style.display = 'none';
   });
