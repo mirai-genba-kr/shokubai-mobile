@@ -7,23 +7,27 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="シリカチャージ">
 <meta name="robots" content="noindex, nofollow">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="favicon.png">
 <title>シリカチャージ記録</title>
 <style>
   html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#16202B}
   #wrap{display:flex;flex-direction:column;height:100%}
   iframe{flex:1 1 auto;width:100%;border:0;display:block;background:#fff}
-  #diag{
-    flex:0 0 auto;background:#0D151C;color:#94A7B8;font-size:10.5px;line-height:1.5;
-    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;padding:6px 9px;
-    max-height:26vh;overflow-y:auto;-webkit-overflow-scrolling:touch;white-space:pre-wrap;word-break:break-all
+
+  /* ホーム画面に追加してもらうための案内（追加済みなら出さない） */
+  #install{
+    flex:0 0 auto;display:none;background:#1B5691;color:#fff;padding:11px 13px;
+    font-family:system-ui,-apple-system,"Noto Sans JP",sans-serif;font-size:12.5px;line-height:1.6
   }
-  #diag b{color:#33B183}
-  #diag .ng{color:#FF7A54}
-  #diag .hd{display:flex;gap:8px;align-items:center;margin-bottom:3px}
-  #diag button{
-    background:#22303B;border:1px solid #3A4956;color:#E6ECF2;border-radius:5px;
-    font-size:10px;padding:3px 7px;font-family:inherit
+  #install.on{display:block}
+  #install b{font-size:13.5px}
+  #install .x{
+    float:right;background:rgba(255,255,255,.2);border:0;color:#fff;border-radius:6px;
+    width:26px;height:26px;font-size:15px;line-height:1;margin-left:8px
   }
+  #install .step{display:inline-block;background:rgba(255,255,255,.18);border-radius:4px;padding:1px 6px;margin:0 2px}
+
   #loading{
     position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
     gap:14px;background:#16202B;color:#94A7B8;
@@ -37,16 +41,18 @@
 <div id="loading"><div class="sp"></div>読み込んでいます…</div>
 
 <div id="wrap">
+  <div id="install">
+    <button class="x" id="installClose" aria-label="閉じる">×</button>
+    <b>ホーム画面に追加してください</b><br>
+    下の <span class="step">共有 ↑</span> → <span class="step">ホーム画面に追加</span> の順にタップ。<br>
+    次回からアイコンだけで開けて、<b>端末登録もやり直しになりません</b>。
+  </div>
+
   <iframe
     id="app"
     title="シリカチャージ記録"
     allow="camera; clipboard-write"
     src="https://script.google.com/macros/s/AKfycbx5_xnfKKTb_0cG0itesSHWfjPJF_6aU9irLvL17EUKfHEqGnhZYIQmOciVue_It4oc/exec"></iframe>
-
-  <div id="diag">
-    <div class="hd"><b>診断</b><button id="diagClear">保存を消す</button><button id="diagHide">閉じる</button></div>
-    <div id="diagBody">起動中…</div>
-  </div>
 </div>
 
 <script>
@@ -54,72 +60,53 @@
  * 端末の「登録済み」状態は、このページ側で預かる。
  *
  * 中のアプリ（GAS）は別ドメインなので、iPhoneのSafariが
- * その保存領域を消してしまう。こちらは利用者が直接開いている
- * ドメインなので消されにくい。
- *
- * ※ いまは原因切り分けのため、下部に診断表示を出している。
- *    解決したら diag ごと削除する。
+ * その保存領域を消してしまう。利用者が直接開いているこちらなら消えない。
+ * 中のアプリから「くれ」と言われたら渡し、「持っておいて」と言われたら保存する。
  */
 (function(){
   'use strict';
 
-  var KEYS  = { device:'shokubai_deviceId', token:'shokubai_refreshToken', visit:'shokubai_lastVisit' };
-  var lines = [];
+  // GASのユーザーコードは *.googleusercontent.com で動く
+  var ALLOW_ORIGIN = /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/;
+  var KEYS = { device:'shokubai_deviceId', token:'shokubai_refreshToken', dismissed:'shokubai_installDismissed' };
 
   function read(k){ try { return window.localStorage.getItem(k); } catch(e){ return null; } }
-  function write(k,v){ try { window.localStorage.setItem(k,v); return true; } catch(e){ return false; } }
+  function write(k,v){ try { window.localStorage.setItem(k,v); } catch(e){} }
   function drop(k){ try { window.localStorage.removeItem(k); } catch(e){} }
 
-  function log(s, ng){ lines.push(ng ? '<span class="ng">'+s+'</span>' : s); render(); }
-  function render(){ document.getElementById('diagBody').innerHTML = lines.join('<br>'); }
-  function cut(v){ return v ? (String(v).slice(0,10) + '…(' + String(v).length + '文字)') : 'なし'; }
-
-  // ── ① このページ自身の保存が生きているか
-  var prev = read(KEYS.visit);
-  var now  = new Date().toLocaleString('ja-JP', { hour12:false });
-  var okWrite = write(KEYS.visit, now);
-
-  log('① このページの保存');
-  log('   書き込み: ' + (okWrite ? 'できる' : 'できない'), !okWrite);
-  log('   前回開いた記録: ' + (prev ? prev : 'なし（＝消えている or 初回）'), !prev);
-  log('   端末ID: ' + cut(read(KEYS.device)));
-  log('   登録トークン: ' + cut(read(KEYS.token)), !read(KEYS.token));
-  log('② 中のアプリとのやり取り待ち…');
-
-  // ── ② 中のアプリとのやり取り
   window.addEventListener('message', function(e){
+    if (!ALLOW_ORIGIN.test(e.origin)) return;
     var m = e.data;
-    if (!m || typeof m !== 'object' || String(m.type||'').indexOf('AUTH') !== 0) return;
-
-    var okOrigin = /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/.test(e.origin);
-    log('   受信 ' + m.type + ' from ' + e.origin);
-    if (!okOrigin) { log('   → 送信元が想定外のため拒否しました', true); return; }
+    if (!m || typeof m !== 'object') return;
 
     if (m.type === 'AUTH_GET') {
-      if (!e.source) { log('   → 返信先が取れません', true); return; }
+      if (!e.source) return;
       e.source.postMessage({
         type:         'AUTH_VALUE',
         deviceId:     read(KEYS.device),
         refreshToken: read(KEYS.token)
       }, e.origin);
-      log('   → 渡した：端末ID ' + cut(read(KEYS.device)) + ' / トークン ' + cut(read(KEYS.token)));
 
     } else if (m.type === 'AUTH_SET') {
-      if (m.deviceId)     log('   → 預かった：端末ID ' + cut(m.deviceId) + (write(KEYS.device, m.deviceId) ? '' : '（保存失敗）'));
-      if (m.refreshToken) log('   → 預かった：トークン ' + cut(m.refreshToken) + (write(KEYS.token, m.refreshToken) ? '' : '（保存失敗）'));
+      if (m.deviceId)     write(KEYS.device, m.deviceId);
+      if (m.refreshToken) write(KEYS.token,  m.refreshToken);
 
     } else if (m.type === 'AUTH_CLEAR') {
       drop(KEYS.token);
-      log('   → トークンを消しました');
     }
   });
 
-  document.getElementById('diagClear').addEventListener('click', function(){
-    drop(KEYS.device); drop(KEYS.token); drop(KEYS.visit);
-    log('保存を消しました。読み込み直すと初回状態になります。');
-  });
-  document.getElementById('diagHide').addEventListener('click', function(){
-    document.getElementById('diag').style.display = 'none';
+  /* ホーム画面から起動していない場合だけ案内を出す。
+     QRから開いたアプリ内ブラウザは保存が残らないため、追加してもらう必要がある。 */
+  var standalone = (window.navigator.standalone === true) ||
+                   (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+
+  if (!standalone && !read(KEYS.dismissed)) {
+    document.getElementById('install').classList.add('on');
+  }
+  document.getElementById('installClose').addEventListener('click', function(){
+    write(KEYS.dismissed, '1');
+    document.getElementById('install').classList.remove('on');
   });
 
   document.getElementById('app').addEventListener('load', function(){
