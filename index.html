@@ -10,11 +10,7 @@
 <title>シリカチャージ記録</title>
 <style>
   html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#16202B}
-  iframe{
-    width:100%;height:100%;border:0;display:block;
-    background:#fff;
-  }
-  /* 読み込み中の表示（iframeが乗ると隠れる） */
+  iframe{width:100%;height:100%;border:0;display:block;background:#fff;position:relative;z-index:2}
   #loading{
     position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
     gap:14px;background:#16202B;color:#94A7B8;
@@ -22,7 +18,6 @@
   }
   #loading .sp{width:28px;height:28px;border:3px solid #2A3844;border-top-color:#33B183;border-radius:50%;animation:s .8s linear infinite}
   @keyframes s{to{transform:rotate(360deg)}}
-  iframe{position:relative;z-index:2}
 </style>
 </head>
 <body>
@@ -32,5 +27,58 @@
   title="シリカチャージ記録"
   allow="camera; clipboard-write"
   src="https://script.google.com/macros/s/AKfycbx5_xnfKKTb_0cG0itesSHWfjPJF_6aU9irLvL17EUKfHEqGnhZYIQmOciVue_It4oc/exec"></iframe>
+
+<script>
+/**
+ * 端末の「登録済み」状態は、このページ側で預かる。
+ *
+ * 中のアプリ（GAS）は別ドメインなので、iPhoneのSafariが
+ * その保存領域を消してしまう。こちらは利用者が直接開いている
+ * ドメインなので消されない。
+ *
+ * 中のアプリから「くれ」と言われたら渡し、「持っておいて」と
+ * 言われたら保存する、という受け渡しだけを行う。
+ */
+(function(){
+  'use strict';
+
+  // GASのユーザーコードは *.googleusercontent.com で動く
+  var ALLOW_ORIGIN = /^https:\/\/[a-z0-9-]+\.googleusercontent\.com$/;
+  var KEYS = { device: 'shokubai_deviceId', token: 'shokubai_refreshToken' };
+
+  function read(k){ try { return window.localStorage.getItem(k); } catch(e){ return null; } }
+  function write(k,v){ try { window.localStorage.setItem(k,v); } catch(e){} }
+  function drop(k){ try { window.localStorage.removeItem(k); } catch(e){} }
+
+  window.addEventListener('message', function(e){
+    if (!ALLOW_ORIGIN.test(e.origin)) return;
+    var m = e.data;
+    if (!m || typeof m !== 'object') return;
+
+    if (m.type === 'AUTH_GET') {
+      if (!e.source) return;
+      e.source.postMessage({
+        type:         'AUTH_VALUE',
+        deviceId:     read(KEYS.device),
+        refreshToken: read(KEYS.token)
+      }, e.origin);
+
+    } else if (m.type === 'AUTH_SET') {
+      if (m.deviceId)     write(KEYS.device, m.deviceId);
+      if (m.refreshToken) write(KEYS.token,  m.refreshToken);
+
+    } else if (m.type === 'AUTH_CLEAR') {
+      drop(KEYS.token);
+    }
+  });
+
+  // 中のアプリが表示されたら読み込み中の表示を消す
+  var f = document.getElementById('app');
+  f.addEventListener('load', function(){
+    var el = document.getElementById('loading');
+    if (el) el.style.display = 'none';
+  });
+})();
+</script>
 </body>
 </html>
